@@ -123,9 +123,9 @@ class OpenAIChatBot(ChatBotAbc):
     def is_ds_start_available(cls):
         return os.environ.get("DEEPSEEK_OPENAI_API_KEY")
 
-    def __init__(self) -> None:
+    def __init__(self, is_ds=False) -> None:
         super().__init__()
-        if self.is_ds_start_available():
+        if is_ds:
             self.provider = os.environ.get(
                 "DEEPSEEK_PROVIDER", "DeepSeek"
             )  # for deepseek
@@ -133,7 +133,7 @@ class OpenAIChatBot(ChatBotAbc):
             self.openai_client = openai.AsyncOpenAI(
                 base_url=os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
                 api_key=os.environ.get("DEEPSEEK_OPENAI_API_KEY"))
-        if self.is_start_available():
+        else:
             self.provider = os.environ.get(
                 "OPENAI_PROVIDER", "openai"
             )  # for openai api compatible provider
@@ -626,9 +626,16 @@ async def init_models():
         MODELS_AVAILABLE.extend(_models["models"])
         AVAILABLE_DEFAULT_MODELS.append(_models["default_models"])
         MODELS_DICT.update({model["model"]: _bot for model in _models["models"]})
-    if OpenAIChatBot.is_start_available() or OpenAIChatBot.is_ds_start_available():
+    if OpenAIChatBot.is_ds_start_available():
         logger.info("OpenAI API is available")
-        _bot = OpenAIChatBot()
+        _bot = OpenAIChatBot(is_ds=True)
+        _models = await _bot.get_models()
+        MODELS_AVAILABLE.extend(_models["models"])
+        AVAILABLE_DEFAULT_MODELS.append(_models["default_models"])
+        MODELS_DICT.update({model["model"]: _bot for model in _models["models"]})
+    if OpenAIChatBot.is_start_available():
+        logger.info("OpenAI API is available")
+        _bot = OpenAIChatBot(is_ds=False)
         _models = await _bot.get_models()
         MODELS_AVAILABLE.extend(_models["models"])
         AVAILABLE_DEFAULT_MODELS.append(_models["default_models"])
