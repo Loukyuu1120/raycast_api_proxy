@@ -119,7 +119,7 @@ class OpenAIChatBot(ChatBotAbc):
         return os.environ.get("OPENAI_API_KEY") or os.environ.get(
             "AZURE_OPENAI_API_KEY"
         )
-
+    @classmethod
     def is_ds_start_available(cls):
         return os.environ.get("DEEPSEEK_OPENAI_API_KEY")
 
