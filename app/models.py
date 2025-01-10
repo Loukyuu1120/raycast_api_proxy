@@ -387,9 +387,8 @@ class DeepSeekAIChatBot(ChatBotAbc):
         self.provider = os.environ.get(
             "DEEPSEEK_PROVIDER", "DeepSeek"
         )  # for openai api compatible provider
-        openai.api_key = os.environ.get("DEEPSEEK_OPENAI_API_KEY")
         logger.info("Using DeepSeek API")
-        self.openai_client = openai.AsyncOpenAI(base_url=os.environ.get("DEEPSEEK_BASE_URL", "https://api.openai.com/v1"))
+        self.openai_client = openai.AsyncOpenAI(base_url=os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"), api_key=os.environ.get("DEEPSEEK_OPENAI_API_KEY"))
 
     def __build_openai_messages(self, raycast_data: dict):
         openai_messages = []
@@ -588,7 +587,7 @@ class DeepSeekAIChatBot(ChatBotAbc):
 
     @cache
     async def get_models(self):
-        default_models = _get_default_model_dict("openai-gpt-4o-mini")
+        default_models = _get_default_model_dict("deepseek-chat")
         """
         {
             "id": "gpt-4o",
@@ -866,16 +865,16 @@ async def init_models():
         MODELS_AVAILABLE.extend(_models["models"])
         AVAILABLE_DEFAULT_MODELS.append(_models["default_models"])
         MODELS_DICT.update({model["model"]: _bot for model in _models["models"]})
-    if OpenAIChatBot.is_start_available():
-        logger.info("OpenAI API is available")
-        _bot = OpenAIChatBot()
+    if DeepSeekAIChatBot.is_start_available():
+        logger.info("DeepSeek API is available")
+        _bot = DeepSeekAIChatBot()
         _models = await _bot.get_models()
         MODELS_AVAILABLE.extend(_models["models"])
         AVAILABLE_DEFAULT_MODELS.append(_models["default_models"])
         MODELS_DICT.update({model["model"]: _bot for model in _models["models"]})
-    if DeepSeekAIChatBot.is_start_available():
-        logger.info("DeepSeek API is available")
-        _bot = DeepSeekAIChatBot()
+    if OpenAIChatBot.is_start_available():
+        logger.info("OpenAI API is available")
+        _bot = OpenAIChatBot()
         _models = await _bot.get_models()
         MODELS_AVAILABLE.extend(_models["models"])
         AVAILABLE_DEFAULT_MODELS.append(_models["default_models"])
