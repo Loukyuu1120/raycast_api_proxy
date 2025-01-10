@@ -120,24 +120,36 @@ class OpenAIChatBot(ChatBotAbc):
             "AZURE_OPENAI_API_KEY"
         )
 
+    def is_ds_start_available(cls):
+        return os.environ.get("DEEPSEEK_OPENAI_API_KEY")
+
     def __init__(self) -> None:
         super().__init__()
-        self.provider = os.environ.get(
-            "OPENAI_PROVIDER", "openai"
-        )  # for openai api compatible provider
-        openai.api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get(
-            "AZURE_OPENAI_API_KEY"
-        )
-        is_azure = openai.api_type in ("azure", "azure_ad", "azuread")
-        if is_azure:
-            logger.info("Using Azure API")
-            self.openai_client = openai.AsyncAzureOpenAI(
-                azure_endpoint=os.environ.get("OPENAI_AZURE_ENDPOINT"),
-                azure_deployment=os.environ.get("AZURE_DEPLOYMENT_ID", None),
+        if self.is_ds_start_available():
+            self.provider = os.environ.get(
+                "DEEPSEEK_PROVIDER", "DeepSeek"
+            )  # for deepseek
+            logger.info("Using DeepSeek API")
+            self.openai_client = openai.AsyncOpenAI(
+                base_url=os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
+                api_key=os.environ.get("DEEPSEEK_OPENAI_API_KEY"))
+        if self.is_start_available():
+            self.provider = os.environ.get(
+                "OPENAI_PROVIDER", "openai"
+            )  # for openai api compatible provider
+            openai.api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get(
+                "AZURE_OPENAI_API_KEY"
             )
-        else:
-            logger.info("Using OpenAI API")
-            self.openai_client = openai.AsyncOpenAI()
+            is_azure = openai.api_type in ("azure", "azure_ad", "azuread")
+            if is_azure:
+                logger.info("Using Azure API")
+                self.openai_client = openai.AsyncAzureOpenAI(
+                    azure_endpoint=os.environ.get("OPENAI_AZURE_ENDPOINT"),
+                    azure_deployment=os.environ.get("AZURE_DEPLOYMENT_ID", None),
+                )
+            else:
+                logger.info("Using OpenAI API")
+                self.openai_client = openai.AsyncOpenAI()
 
     def __build_openai_messages(self, raycast_data: dict):
         openai_messages = []
@@ -337,257 +349,6 @@ class OpenAIChatBot(ChatBotAbc):
     @cache
     async def get_models(self):
         default_models = _get_default_model_dict("openai-gpt-4o-mini")
-        """
-        {
-            "id": "gpt-4o",
-            "created": 1715367049,
-            "object": "model",
-            "owned_by": "system"
-        }
-        """
-        openai_models = (await self.openai_client.models.list()).data
-        models = []
-        for model in openai_models:
-            if not re.match(r"deepseek-c\S+", model.id) and not re.match(r"gpt-\d", model.id) and not re.match(r"o\d", model.id):
-                # skip other models
-                logger.debug(f"Skipping model: {model.id}")
-                continue
-            if "audio" in model.id:
-                # skip audio models
-                logger.debug(f"Skipping audio model: {model.id}")
-                continue
-            if "realtime" in model.id:
-                # skip real models
-                logger.debug(f"Skipping real model: {model.id}")
-                continue
-            model_id = f"{self.provider}-{model.id}"
-            models.append(
-                {
-                    "id": model_id,
-                    "model": model.id,
-                    "name": f"{self.provider} {model.id}",
-                    "provider": "openai",
-                    "provider_name": self.provider,
-                    "provider_brand": self.provider,
-                    "context": 16,
-                    **_get_model_extra_info(model.id),
-                }
-            )
-        return {"default_models": default_models, "models": models}
-
-
-class DeepSeekAIChatBot(ChatBotAbc):
-
-    @classmethod
-    def is_start_available(cls):
-        return os.environ.get("DEEPSEEK_OPENAI_API_KEY")
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.provider = os.environ.get(
-            "DEEPSEEK_PROVIDER", "DeepSeek"
-        )  # for openai api compatible provider
-        logger.info("Using DeepSeek API")
-        self.openai_client = openai.AsyncOpenAI(base_url=os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"), api_key=os.environ.get("DEEPSEEK_OPENAI_API_KEY"))
-
-    def __build_openai_messages(self, raycast_data: dict):
-        openai_messages = []
-        temperature = os.environ.get("TEMPERATURE", 0.5)
-        for msg in raycast_data["messages"]:
-            if "system_instructions" in msg["content"]:
-                openai_messages.append(
-                    {
-                        "role": "system",
-                        "content": msg["content"]["system_instructions"],
-                    }
-                )
-            if "command_instructions" in msg["content"]:
-                openai_messages.append(
-                    {
-                        "role": "system",
-                        "content": msg["content"]["command_instructions"],
-                    }
-                )
-            if "additional_system_instructions" in raycast_data:
-                openai_messages.append(
-                    {
-                        "role": "system",
-                        "content": raycast_data["additional_system_instructions"],
-                    }
-                )
-            if "text" in msg["content"]:
-                openai_messages.append(
-                    {"role": msg["author"], "content": msg["content"]["text"]}
-                )
-            if "temperature" in msg["content"]:
-                temperature = msg["content"]["temperature"]
-        return openai_messages, temperature
-
-    async def chat_completions(self, raycast_data: dict):
-        openai_messages, temperature = self.__build_openai_messages(raycast_data)
-        model = raycast_data["model"]
-        tools = []
-        if (
-            "image_generation_tool" in raycast_data
-            and raycast_data["image_generation_tool"]
-        ):
-            tools.append(self.__build_openai_function_img_tool(raycast_data))
-        async for i in self.__warp_chat(
-            openai_messages, model, temperature, tools=tools, stream=True
-        ):
-            yield i
-
-    async def __warp_chat(self, messages, model, temperature, **kwargs):
-        functions = {}
-        current_function_id = None
-        async for choice, error in self.__chat(messages, model, temperature, **kwargs):
-            if error:
-                error_message = (
-                    error.body.get("message", {}) if error.body else error.message
-                )
-                yield f'data: {json_dumps({"text":error_message, "finish_reason":"error"})}\n\n'
-                return
-            if choice.delta and choice.delta.content:
-                yield f'data: {json_dumps({"text": choice.delta.content})}\n\n'
-            if choice.delta.tool_calls:
-                logger.debug(f"Tool calls: {choice.delta}")
-                for tool_call in choice.delta.tool_calls:
-                    logger.debug(f"Tool call: {tool_call}")
-                    if tool_call.id and tool_call.type == "function":
-                        current_function_id = tool_call.id
-                        if current_function_id not in functions:
-                            functions[current_function_id] = {
-                                "delta": choice.delta,
-                                "name": tool_call.function.name,
-                                "args": "",
-                            }
-                    # add arguments stream string to the current function
-                    functions[current_function_id][
-                        "args"
-                    ] += tool_call.function.arguments
-                    continue
-            if choice.finish_reason is not None:
-                logger.debug(f"Finish reason: {choice.finish_reason}")
-                if choice.finish_reason == "tool_calls":
-                    continue
-                yield f'data: {json_dumps({"text": "", "finish_reason": choice.finish_reason})}\n\n'
-        if functions:
-            logger.debug(f"Tool functions: {functions}")
-            for tool_call_id, tool in functions.items():
-                delta, name, args = tool["delta"], tool["name"], tool["args"]
-                logger.debug(f"Tool call: {name} with args: {args}")
-                args = json.loads(args)
-                messages.append(delta)  # add the tool call to messages
-                tool_res = None
-                if name == "generate_image":
-                    yield f'data: {json_dumps({"text": "Generating image..."})}\n\n'
-                    tool_res = await self.__generate_image(**args)
-                else:
-                    logger.error(f"Unknown tool function: {name}")
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call_id,
-                        "name": tool["name"],
-                        "content": tool_res,
-                    }
-                )
-                async for i in self.__warp_chat(messages, model, temperature, **kwargs):
-                    yield i
-
-    def __build_openai_function_img_tool(self, raycast_data: dict):
-        return {
-            "type": "function",
-            "function": {
-                "name": "generate_image",
-                "description": "Generate an image based on dall-e-3",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "prompt": {
-                            "type": "string",
-                            "description": "The prompt to generate the image for dall-e-3 model, e.g. 'a cat in the forest', please generate the prompt by usr input",
-                        }
-                    },
-                    "required": ["prompt"],
-                },
-            },
-        }
-
-    async def __generate_image(self, prompt, model="dall-e-3"):
-        # return '{"url": "https://images.ctfassets.net/kftzwdyauwt9/1ZTOGp7opuUflFmI2CsATh/df5da4be74f62c70d35e2f5518bf2660/ChatGPT_Carousel1.png?w=828&q=90&fm=webp"}'  # debug image
-        try:
-            res = await self.openai_client.images.generate(
-                model=model,
-                prompt=prompt,
-                response_format="url",
-                # size="256x256",
-            )
-            return json.dumps({"url": res.data[0].url})
-        except openai.OpenAIError as e:
-            logger.error(f"OpenAI error: {e}")
-            return json.dumps({"error": str(e)})
-
-    async def translate_completions(self, raycast_data: dict):
-        messages = [
-            {"role": "system", "content": "Translate the following text:"},
-            {
-                "role": "system",
-                "content": f"The target language is: {raycast_data['target']}",
-            },
-            {"role": "user", "content": raycast_data["q"]},
-        ]
-        model = os.environ.get("OPENAI_TRANSLATE_MODEL", "gpt-3.5-turbo")
-        logger.debug(f"Translating: {raycast_data['q']} with model: {model}")
-        async for choice, error in self.__chat(messages, model=model, temperature=0.8):
-            if error:
-                error_message = (
-                    error.body.get("message", {}) if error.body else error.message
-                )
-                yield f"Error: {error_message}"
-                return
-            if choice.delta:
-                yield choice.delta.content
-
-    async def __chat(self, messages, model, temperature, **kwargs):
-        if "tools" in kwargs and not kwargs["tools"]:
-            # pop tools from kwargs, empty tools will cause error
-            kwargs.pop("tools")
-        # stream = "tools" not in kwargs
-        stream = "stream" in kwargs and kwargs["stream"]
-        try:
-            for m in messages:
-                # check model is o1 replace role system to user
-                if model.startswith("o1") and m.get("role") == "system":
-                    m["role"] = "user"
-            logger.debug(f"openai chat stream: {stream}")
-            res = await self.openai_client.chat.completions.create(
-                model=model,
-                messages=messages,
-                n=1,
-                temperature=1 if model.startswith("o1") else temperature,
-                # stream=stream,
-                **kwargs,
-            )
-        except openai.OpenAIError as e:
-            logger.error(f"OpenAI error: {e}")
-            yield None, e
-            return
-        if not stream:
-            choice = res.choices[0]
-            choice.delta = res.choices[0].message
-            yield choice, None
-            return
-        async for chunk in res:
-            if not chunk.choices:
-                logger.error(f"OpenAI error: {chunk}")
-                yield None, None
-                return
-            yield chunk.choices[0], None
-
-    @cache
-    async def get_models(self):
-        default_models = _get_default_model_dict("deepseek-chat")
         """
         {
             "id": "gpt-4o",
@@ -865,14 +626,7 @@ async def init_models():
         MODELS_AVAILABLE.extend(_models["models"])
         AVAILABLE_DEFAULT_MODELS.append(_models["default_models"])
         MODELS_DICT.update({model["model"]: _bot for model in _models["models"]})
-    if DeepSeekAIChatBot.is_start_available():
-        logger.info("DeepSeek API is available")
-        _bot = DeepSeekAIChatBot()
-        _models = await _bot.get_models()
-        MODELS_AVAILABLE.extend(_models["models"])
-        AVAILABLE_DEFAULT_MODELS.append(_models["default_models"])
-        MODELS_DICT.update({model["model"]: _bot for model in _models["models"]})
-    if OpenAIChatBot.is_start_available():
+    if OpenAIChatBot.is_start_available() or OpenAIChatBot.is_ds_start_available():
         logger.info("OpenAI API is available")
         _bot = OpenAIChatBot()
         _models = await _bot.get_models()
