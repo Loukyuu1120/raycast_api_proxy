@@ -360,7 +360,7 @@ class OpenAIChatBot(ChatBotAbc):
         openai_models = (await self.openai_client.models.list()).data
         models = []
         for model in openai_models:
-            if not re.match(r"deepseek-c\S+", model.id) and not re.match(r"gpt-\d", model.id) and not re.match(r"o\d", model.id):
+            if not re.match(r"deepseek-\S+", model.id) and not re.match(r"gpt-\d", model.id) and not re.match(r"o\d", model.id):
                 # skip other models
                 logger.debug(f"Skipping model: {model.id}")
                 continue
