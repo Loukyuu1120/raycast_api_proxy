@@ -10,7 +10,12 @@ import google.generativeai as genai
 import openai
 from google.generativeai import GenerativeModel
 
-from app.utils import json_dumps
+from app.utils import (
+    json_dumps,
+    get_file_info,
+    generate_file_url,
+    logger,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -80,35 +85,120 @@ def _get_model_extra_info(name=""):
         "speed": 3,
         "intelligence": 3,
     }
-    if "gpt-4" in name:
-        ext["capabilities"] = {
-            "web_search": "full",
-            "image_generation": "full",
-        }
-        ext["abilities"] = {
-            "web_search": {
-                "toggleable": True,
+    model_info = {
+        "gpt-3.5-turbo": {
+            "description": (
+                "GPT-3.5 Turbo is OpenAI’s fastest model, making it ideal for tasks that require quick "
+                "response times with basic language processing capabilities.\n"
+            ),
+            "speed": 2,
+            "intelligence": 2,
+        },
+        "gpt-4-turbo": {
+            "description": (
+                "The latest GPT-4 Turbo model with vision capabilities. Vision requests can now use JSON mode and "
+                "function calling.\n"
+            ),
+            "speed": 0,
+            "intelligence": 4,
+            "capabilities": {
+                "web_search": "full",
+                "image_generation": "full",
             },
-            "image_generation": {
-                "model": "dall-e-3",
+            "abilities": {
+                "web_search": {"toggleable": True},
+                "image_generation": {"model": "dall-e-3"},
+                "vision": {
+                    "formats": [
+                        "image/png",
+                        "image/jpeg",
+                        "image/webp",
+                        "image/gif",
+                    ],
+                },
             },
-            "system_message": {
-                "supported": True,
+        },
+        "gpt-4o": {
+                "description": (
+                    "GPT-4o is the most advanced and fastest model from OpenAI, making it a great choice for "
+                    "complex everyday problems and deeper conversations.\n"
+                ),
+                "speed": 2,
+                "intelligence": 5,
+                "capabilities": {
+                    "web_search": "full",
+                    "image_generation": "full",
+                },
+            "abilities": {
+                "web_search": {"toggleable": True},
+                "image_generation": {"model": "dall-e-3"},
+                "vision": {
+                    "formats": [
+                        "image/png",
+                        "image/jpeg",
+                        "image/webp",
+                        "image/gif",
+                    ],
+                },
             },
-            "temperature": {
-                "supported": True,
+        },
+        "gpt-4o-mini": {
+            "description": (
+                "GPT-4o mini is a highly intelligent and fast model that is ideal for a variety of everyday tasks.\n"
+            ),
+            "requires_better_ai": False,
+            "speed": 2,
+            "intelligence": 4,
+            "capabilities": {
+                "web_search": "full",
+                "image_generation": "full",
             },
-        }
-    # o1 models don't support system_message and temperature
-    if "o1" in name:
-        ext["abilities"].update({
-            "system_message": {
-                "supported": False,
+            "abilities": {
+                "web_search": {"toggleable": True},
+                "image_generation": {"model": "dall-e-3"},
+                "vision": {
+                    "formats": [
+                        "image/png",
+                        "image/jpeg",
+                        "image/webp",
+                        "image/gif",
+                    ],
+                },
             },
-            "temperature": {
-                "supported": False,
-            },
-        })
+        },
+        "o1-preview": {
+            "description": (
+                "o1-preview is a reasoning model designed to solve hard problems across domains. "
+                "These models think before they answer, producing a long internal chain of thought before responding to the user.\n"
+            ),
+            "speed": 1,
+            "intelligence": 5,
+        },
+        "o1-mini": {
+            "description": (
+                "o1-mini is a faster and cheaper reasoning model particularly good at coding, math, and science. "
+                "These models think before they answer, producing a long internal chain of thought before responding to the user.\n"
+            ),
+            "speed": 2,
+            "intelligence": 4,
+        },
+        "deepseek-chat": {
+            "description": (
+                "DeepSeek Chat is a faster and cheaper model\n"
+            ),
+            "speed": 3,
+            "intelligence": 3,
+        },
+        "deepseek-reasoner": {
+            "description": (
+                "DeepSeek Quick AI is a faster and cheaper model\n"
+            ),
+            "speed": 2,
+            "intelligence": 4,
+        },
+    }
+    if name in model_info:
+        ext.update(model_info[name])
     return ext
 
 
@@ -176,10 +266,35 @@ class OpenAIChatBot(ChatBotAbc):
                         "content": raycast_data["additional_system_instructions"],
                     }
                 )
+            message_content = []
             if "text" in msg["content"]:
-                openai_messages.append(
-                    {"role": msg["author"], "content": msg["content"]["text"]}
+                message_content.append(
+                    {"type": "text", "text": msg["content"]["text"]}
                 )
+            if "attachments" in msg["content"]:
+                for attachment in msg["content"]["attachments"]:
+                    attachment_id = attachment.get("id")
+                    attachment_type = attachment.get("type")
+
+                    if attachment_type == "file" and attachment_id:
+                        # Get the file information using the attachment ID
+                        file_info = get_file_info(attachment_id)
+                        if file_info:
+                            # Generate the file URL
+                            file_url = generate_file_url(file_info['key'])
+                            # Append the image URL to the message content
+                            message_content.append({
+                                "type": "image_url",
+                                "image_url": {"url": file_url}
+                            })
+                        else:
+                            logger.error(f"File with id {attachment_id} not found.")
+            # If there's any content to send, add it to openai_messages
+            if message_content:
+                openai_messages.append({
+                    "role": msg["author"],
+                    "content": message_content
+                })
             if "temperature" in msg["content"]:
                 temperature = msg["content"]["temperature"]
         return openai_messages, temperature
@@ -360,7 +475,7 @@ class OpenAIChatBot(ChatBotAbc):
         openai_models = (await self.openai_client.models.list()).data
         models = []
         for model in openai_models:
-            if not re.match(r"deepseek-c\S+", model.id) and not re.match(r"gpt-\d", model.id) and not re.match(r"o\d", model.id):
+            if not re.match(r"deepseek-\S+", model.id) and not re.match(r"gpt-\d", model.id) and not re.match(r"o\d", model.id):
                 # skip other models
                 logger.debug(f"Skipping model: {model.id}")
                 continue
@@ -381,7 +496,7 @@ class OpenAIChatBot(ChatBotAbc):
                     "provider": "openai",
                     "provider_name": self.provider,
                     "provider_brand": self.provider,
-                    "context": 16,
+                    "context": 127 if model.id.startswith("gpt-4") or model.id.startswith("o1") else 16,
                     **_get_model_extra_info(model.id),
                 }
             )
@@ -627,7 +742,7 @@ async def init_models():
         AVAILABLE_DEFAULT_MODELS.append(_models["default_models"])
         MODELS_DICT.update({model["model"]: _bot for model in _models["models"]})
     if OpenAIChatBot.is_ds_start_available():
-        logger.info("OpenAI API is available")
+        logger.info("DeepSeek API is available")
         _bot = OpenAIChatBot(is_ds=True)
         _models = await _bot.get_models()
         MODELS_AVAILABLE.extend(_models["models"])
