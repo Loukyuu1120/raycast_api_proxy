@@ -199,6 +199,35 @@ def _get_model_extra_info(name=""):
     }
     if name in model_info:
         ext.update(model_info[name])
+    if "gpt-4" in name:
+        ext["capabilities"] = {
+            "web_search": "full",
+            "image_generation": "full",
+        }
+        ext["abilities"] = {
+            "web_search": {
+                "toggleable": True,
+            },
+            "image_generation": {
+                "model": "dall-e-3",
+            },
+            "system_message": {
+                "supported": True,
+            },
+            "temperature": {
+                "supported": True,
+            },
+        }
+    # o1 models don't support system_message and temperature
+    if "o1" in name:
+        ext["abilities"].update({
+            "system_message": {
+                "supported": False,
+            },
+            "temperature": {
+                "supported": False,
+            },
+        })
     return ext
 
 
