@@ -266,11 +266,6 @@ class OpenAIChatBot(ChatBotAbc):
                         "content": raycast_data["additional_system_instructions"],
                     }
                 )
-            message_content = []
-            if "text" in msg["content"]:
-                message_content.append(
-                    {"type": "text", "text": msg["content"]["text"]}
-                )
             if "attachments" in msg["content"]:
                 for attachment in msg["content"]["attachments"]:
                     attachment_id = attachment.get("id")
@@ -283,18 +278,19 @@ class OpenAIChatBot(ChatBotAbc):
                             # Generate the file URL
                             file_url = generate_file_url(file_info['key'])
                             # Append the image URL to the message content
-                            message_content.append({
-                                "type": "image_url",
-                                "image_url": {"url": file_url}
+                            openai_messages.append({
+                                "role": msg["author"],
+                                "content": { "type": "image_url",
+                                             "image_url": {"url": file_url}
+                                             }
                             })
                         else:
                             logger.error(f"File with id {attachment_id} not found.")
+            if "text" in msg["content"]:
+                openai_messages.append(
+                    {"role": msg["author"], "content": msg["content"]["text"]}
+                )
             # If there's any content to send, add it to openai_messages
-            if message_content:
-                openai_messages.append({
-                    "role": msg["author"],
-                    "content": message_content
-                })
             if "temperature" in msg["content"]:
                 temperature = msg["content"]["temperature"]
         return openai_messages, temperature
